@@ -1,0 +1,157 @@
+---
+- name: check if samba is allready installed
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: unjoin if the script runs again
+  block:
+  - name: check if server is joined
+    ansible.builtin.shell:
+      cmd: net ads testjoin
+    register: join_check_output
+
+  - name: leave AD (if an active join exist)
+    ansible.builtin.shell:
+      cmd: net ads leave -U '{{ vault_samba.administrator_user }}' --password={{ vault_samba.administrator_password }}
+    when: join_check_output.stdout == 'Join is OK'
+  when: "'samba' in ansible_facts.packages"
+
+- name: Stop Services
+  block:
+  - name: Populate service facts
+    service_facts:
+
+  - name: Make sure smbd, nmbd and winbind are stopped
+    ansible.builtin.systemd:
+      name: '{{ item }}'
+      state: stopped
+      enabled: no
+      masked: no
+      daemon_reload: yes
+    when: "item in services"
+    with_items:
+      - smbd
+      - nmbd
+      - winbind
+
+- name: remove all old databases and caches
+  block:
+  - name: get directories
+    ansible.builtin.shell:
+      cmd: smbd -b | egrep "LOCKDIR|STATEDIR|CACHEDIR|PRIVATE_DIR" | awk '{print $2}' | xargs
+    register: collected_directories
+
+  - name: collect files
+    ansible.builtin.find:
+      paths: '{{ collected_directories.stdout.split() }}'
+      hidden: True
+      recurse: True
+      #file_type: any
+      patterns: '*.tdb,*.ldb'
+    register: collected_files
+
+  - name: remove collected files and dirs (e.g. chaches)
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items: 
+      - '{{ collected_files.files }}'
+
+- name: install packages python-is-python3 and samba
+  ansible.builtin.apt:
+    name: '{{ item }}'
+    state: present
+    update_cache: true
+  register: apt_status
+  until: apt_status is success
+  delay: 6
+  retries: 10
+  with_items:
+    - python-is-python3
+    - samba
+    - winbind
+    - libnss-winbind
+    - libpam-winbind
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: ansible_os_family == 'Debian'
+
+- name: copy smb.conf
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: /etc/samba/smb.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: join Domain
+  ansible.builtin.shell:
+    cmd: samba-tool domain join bodomos.lan MEMBER -U '{{ vault_samba.administrator_user }}' --password={{ vault_samba.administrator_password }}
+
+- name: modify nsswitch to use winbind
+  block:
+  - name: add winbind to nsswitch-passwd
+    ansible.builtin.lineinfile:
+      path: /etc/nsswitch.conf
+      regexp: '^passwd:'
+      line: 'passwd:         files winbind systemd'
+
+  - name: add winbind to nsswitch-passwd
+    ansible.builtin.lineinfile:
+      path: /etc/nsswitch.conf
+      regexp: '^group:'
+      line: 'group:          files winbind systemd'
+
+- name: restart services
+  block:
+  - name: Populate service facts
+    ansible.builtin.service_facts:
+
+  - name: Start smbd, nmbd
+    ansible.builtin.systemd:
+      name: '{{ item }}'
+      state: restarted
+      enabled: yes
+      masked: no
+      daemon_reload: yes
+    when: "item in services"
+    with_items:
+      - smbd
+      - nmbd
+      - winbind
+
+- name: create directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: 'domain users'
+    mode: '0770'
+  with_items:
+    - '/var/data/MUSIC'
+    - '/var/data/PICTURE'
+    - '/var/data/PUBLIC'
+    - '/var/data/SCANNS'
+    - '/var/data/VIDEO'
+
+- name: tests
+  block:
+  - name: Check the NETLOGON connection
+    ansible.builtin.shell:
+      cmd: wbinfo -P
+    register: wbinfo_test_netlogon
+    failed_when: wbinfo_test_netlogon.rc >=1
+
+  - name: Check the shared secret
+    ansible.builtin.shell:
+      cmd: wbinfo -t
+    register: wbinfo_test_shared_secret
+    failed_when: wbinfo_test_shared_secret.rc >=1
+
+  - name: check if server is joined
+    ansible.builtin.shell:
+      cmd: net ads testjoin
+    register: join_test_output
+    failed_when: join_test_output.stdout != 'Join is OK'
+
+...

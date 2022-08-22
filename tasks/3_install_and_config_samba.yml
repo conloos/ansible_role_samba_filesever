@@ -12,8 +12,9 @@
 
   - name: leave AD (if an active join exist)
     ansible.builtin.shell:
-      cmd: "/usr/bin/net ads leave -U '{{ vault_samba.administrator_user }}' --password={{ vault_samba.administrator_password }}"
+      cmd: "/usr/bin/net ads leave -U '{{ vault_AD.administrator_user }}' --password={{ vault_AD.administrator_password }}"
     when: join_check_output.stdout == "Join is OK"
+    no_log: True
   when: "'samba' in ansible_facts.packages"
 
 - name: Stop Services
@@ -86,7 +87,8 @@
 
 - name: join Domain
   ansible.builtin.shell:
-    cmd: "/usr/bin/samba-tool domain join bodomos.lan MEMBER -U '{{ vault_samba.administrator_user }}' --password={{ vault_samba.administrator_password }}"
+    cmd: "/usr/bin/samba-tool domain join bodomos.lan MEMBER -U '{{ vault_AD.administrator_user }}' --password={{ vault_AD.administrator_password }}"
+  no_log: True
 
 - name: modify nsswitch to use winbind
   block:

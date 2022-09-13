@@ -1,68 +1,68 @@
 ---
-- name: check if samba is allready installed
+- name: Sheck if samba is allready installed
   ansible.builtin.package_facts:
     manager: auto
 
-- name: unjoin if the script runs again
+- name: Unjoin if the script runs again
   block:
-  - name: check if server is joined
-    ansible.builtin.shell:
-      cmd: "/usr/bin/net ads testjoin"
-    register: join_check_output
+    - name: Check if server is joined  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "/usr/bin/net ads testjoin"
+      register: join_check_output
 
-  - name: leave AD (if an active join exist)
-    ansible.builtin.shell:
-      cmd: "/usr/bin/net ads leave -U '{{ vault_AD.administrator_user }}' --password={{ vault_AD.administrator_password }}"
-    when: join_check_output.stdout == "Join is OK"
-    no_log: True
-  when: "'samba' in ansible_facts.packages"
+    - name: Leave AD (if an active join exist)
+      ansible.builtin.command:
+        cmd: "/usr/bin/net ads leave -U '{{ vault_AD.administrator_user }}' --password={{ vault_AD.administrator_password }}"
+      when: join_check_output.stdout == "Join is OK"
+      no_log: true
+  when: ('samba' in ansible_facts.packages)
 
 - name: Stop Services
   block:
-  - name: Populate service facts
-    service_facts:
+    - name: Populate service facts
+      ansible.builtin.service_facts:
 
-  - name: Make sure smbd, nmbd and winbind are stopped
-    ansible.builtin.systemd:
-      name: '{{ item }}'
-      state: stopped
-      enabled: no
-      masked: no
-      daemon_reload: yes
-    when: "item in services"
-    with_items:
-      - smbd.service
-      - nmbd.service
-      - winbind.service
+    - name: Make sure smbd, nmbd and winbind are stopped
+      ansible.builtin.systemd:
+        name: '{{ item }}'
+        state: stopped
+        enabled: false
+        masked: false
+        daemon_reload: true
+      when: "item in services"
+      with_items:
+        - smbd.service
+        - nmbd.service
+        - winbind.service
 
-- name: remove all old databases and caches
+- name: Remove all old databases and caches
   block:
-  - name: get directories
-    ansible.builtin.shell:
-      cmd: "/usr/sbin/smbd -b | egrep 'LOCKDIR|STATEDIR|CACHEDIR|PRIVATE_DIR' | awk '{print $2}' | xargs"
-    register: collected_directories
+    - name: Get directories  # noqa no-changed-when
+      ansible.builtin.shell:
+        cmd: "/usr/sbin/smbd -b | egrep 'LOCKDIR|STATEDIR|CACHEDIR|PRIVATE_DIR' | awk '{print $2}' | xargs"
+      register: collected_directories
 
-  - name: collect files
-    ansible.builtin.find:
-      paths: "{{ collected_directories.stdout.split() }}"
-      hidden: True
-      recurse: True
-      #file_type: any
-      patterns: "*.tdb,*.ldb"
-    register: collected_files
+    - name: Collect files
+      ansible.builtin.find:
+        paths: "{{ collected_directories.stdout.split() }}"
+        hidden: true
+        recurse: true
+        # file_type: any
+        patterns: "*.tdb,*.ldb"
+      register: collected_files
 
-  - name: remove collected files and dirs (e.g. chaches)
-    ansible.builtin.file:
-      path: "{{ item.path }}"
-      state: absent
-    with_items: 
-      - "{{ collected_files.files }}"
+    - name: Remove collected files and dirs (e.g. chaches)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items:
+        - "{{ collected_files.files }}"
 
-- name: install packages python-is-python3 and samba
+- name: Install packages python-is-python3 and samba
   ansible.builtin.apt:
     name: "{{ item }}"
     state: present
-    update_cache: True
+    update_cache: true
   register: apt_status
   until: apt_status is success
   delay: 6
@@ -77,7 +77,7 @@
     DEBIAN_FRONTEND: noninteractive
   when: ansible_os_family == 'Debian'
 
-- name: copy smb.conf
+- name: Copy smb.conf
   ansible.builtin.template:
     src: smb.conf.j2
     dest: /etc/samba/smb.conf
@@ -85,44 +85,44 @@
     group: root
     mode: "0644"
 
-- name: join Domain
-  ansible.builtin.shell:
-    cmd: "/usr/bin/samba-tool domain join bodomos.lan MEMBER -U '{{ vault_AD.administrator_user }}' --password={{ vault_AD.administrator_password }}"
-  no_log: True
+- name: Join Domain  # noqa no-changed-when
+  ansible.builtin.command:
+    cmd: "/usr/bin/samba-tool domain join {{ realm }} MEMBER -U '{{ vault_AD.administrator_user }}' --password={{ vault_AD.administrator_password }}"
+  no_log: true
 
-- name: modify nsswitch to use winbind
+- name: Modify nsswitch to use winbind
   block:
-  - name: add winbind to nsswitch-passwd
-    ansible.builtin.lineinfile:
-      path: /etc/nsswitch.conf
-      regexp: "^passwd:"
-      line: "passwd:         files winbind systemd"
+    - name: Add winbind to nsswitch-passwd
+      ansible.builtin.lineinfile:
+        path: /etc/nsswitch.conf
+        regexp: "^passwd:"
+        line: "passwd:         files winbind systemd"
 
-  - name: add winbind to nsswitch-passwd
-    ansible.builtin.lineinfile:
-      path: /etc/nsswitch.conf
-      regexp: "^group:"
-      line: "group:          files winbind systemd"
+    - name: Add winbind to nsswitch-passwd
+      ansible.builtin.lineinfile:
+        path: /etc/nsswitch.conf
+        regexp: "^group:"
+        line: "group:          files winbind systemd"
 
-- name: restart services
+- name: Restart services
   block:
-  - name: Populate service facts
-    ansible.builtin.service_facts:
+    - name: Populate service facts
+      ansible.builtin.service_facts:
 
-  - name: Start smbd, nmbd
-    ansible.builtin.systemd:
-      name: "{{ item }}"
-      state: restarted
-      enabled: yes
-      masked: no
-      daemon_reload: yes
-    when: "item in services"
-    with_items:
-      - smbd.service
-      - nmbd.service
-      - winbind.service
+    - name: Start smbd, nmbd
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+        enabled: true
+        masked: false
+        daemon_reload: true
+      when: "item in services"
+      with_items:
+        - smbd.service
+        - nmbd.service
+        - winbind.service
 
-- name: create directories
+- name: Create directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -136,24 +136,23 @@
     - "/var/data/SCANNS"
     - "/var/data/VIDEO"
 
-- name: tests
+- name: Tests
   block:
-  - name: Check the NETLOGON connection
-    ansible.builtin.shell:
-      cmd: "/usr/bin/wbinfo -P"
-    register: wbinfo_test_netlogon
-    failed_when: wbinfo_test_netlogon.rc >=1
+    - name: Check the NETLOGON connection  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "/usr/bin/wbinfo -P"
+      register: wbinfo_test_netlogon
+      failed_when: wbinfo_test_netlogon.rc >= 1
 
-  - name: Check the shared secret
-    ansible.builtin.shell:
-      cmd: "/usr/bin/wbinfo -t"
-    register: wbinfo_test_shared_secret
-    failed_when: wbinfo_test_shared_secret.rc >=1
+    - name: Check the shared secret  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "/usr/bin/wbinfo -t"
+      register: wbinfo_test_shared_secret
+      failed_when: wbinfo_test_shared_secret.rc >= 1
 
-  - name: check if server is joined
-    ansible.builtin.shell:
-      cmd: "/usr/bin/net ads testjoin"
-    register: join_test_output
-    failed_when: join_test_output.stdout != 'Join is OK'
-
+    - name: Check if server is joined  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "/usr/bin/net ads testjoin"
+      register: join_test_output
+      failed_when: join_test_output.stdout != 'Join is OK'
 ...
